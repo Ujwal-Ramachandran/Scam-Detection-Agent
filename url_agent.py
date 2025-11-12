@@ -3,8 +3,17 @@ import tldextract
 import whois
 from urllib.parse import urlparse, parse_qs
 import datetime as dt
+from typing import NamedTuple
 from utils import parse_agent_response, query_llm
 from config import SELENIUM_TIMEOUT, REQUEST_TIMEOUT
+from detection_context import DetectionContext
+
+class URLExpansionResult(NamedTuple):
+    """Result of URL expansion with Selenium"""
+    final_url: str
+    was_shortened: bool
+    is_phishing: bool
+    error_message: str = ""
 
 class URLAgent:
     def __init__(self):
@@ -13,54 +22,54 @@ class URLAgent:
         """
         self.name = "URLAgent"
     
-    def analyze(self, data):
+    def analyze(self, context: DetectionContext, url: str) -> DetectionContext:
         """
         Analyze URL structure for phishing indicators
         
         Args:
-            data (dict): {
-                'url': str
-            }
+            context: DetectionContext with current analysis state
+            url: URL to analyze
         
         Returns:
-            dict: {
-                'verdict': 'safe'|'phishing'|'uncertain',
-                'confidence': float,
-                'reasoning': str,
-                'url_features': dict,
-                'expanded_url': str,
-                'was_shortened': bool,
-                'javascript_analysis': dict
-            }
+            Updated DetectionContext with URL analysis results
         """
-        url = data.get('url', '')
         
         print(f"\n[{self.name}] Analyzing URL: {url}")
         # Step 1: Expand URL with Selenium
-        expanded_url, was_shortened, is_phishing = self.expand_url_with_selenium(url)
-        if is_phishing[0]:
-            sel_error = str(is_phishing[1])[:15] if len(str(is_phishing[1])) > 15 else str(is_phishing[1])
-            return {
+        expansion_result = self.expand_url_with_selenium(url)
+        
+        if expansion_result.is_phishing:
+            sel_error = expansion_result.error_message[:50] if len(expansion_result.error_message) > 50 else expansion_result.error_message
+            result = {
                 'verdict': 'phishing',
                 'confidence': 0.9,
-                'reasoning': f'This link was expired and is probably a phishing link. Selenium error: {sel_error}....',
+                'reasoning': f'This link was expired and is probably a phishing link. Selenium error: {sel_error}...',
                 'url_features': {},
-                'expanded_url': expanded_url,
-                'was_shortened': was_shortened,
+                'expanded_url': expansion_result.final_url,
+                'was_shortened': expansion_result.was_shortened,
                 'javascript_analysis': {}
             }
+            
+            # Update context
+            context.set_agent_result(self.name, result)
+            context.expanded_urls[url] = expansion_result.final_url
+            context.url_shortener_used = expansion_result.was_shortened
+            context.add_risk(40, f'Link expired or inaccessible: {sel_error}', self.name)
+            
+            return context
+        
         # Step 2: Check for malicious JavaScript
-        js_analysis = self.check_malicious_javascript(expanded_url)
+        js_analysis = self.check_malicious_javascript(expansion_result.final_url)
         
         # Step 3: Extract URL features from expanded URL
-        url_features = self._extract_url_features(expanded_url)
+        url_features = self._extract_url_features(expansion_result.final_url)
         
         # Add expansion info to features
         url_features['original_url'] = url
-        url_features['expanded_url'] = expanded_url
-        url_features['was_shortened'] = was_shortened
+        url_features['expanded_url'] = expansion_result.final_url
+        url_features['was_shortened'] = expansion_result.was_shortened
         
-        url_display = f"Original URL: {url}\nExpanded URL: {expanded_url}" if was_shortened else f"URL: {url}"
+        url_display = f"Original URL: {url}\nExpanded URL: {expansion_result.final_url}" if expansion_result.was_shortened else f"URL: {url}"
         js_info = ""
         if js_analysis['has_suspicious_js']:
             js_info = f"\nSuspicious JavaScript Detected: {', '.join(js_analysis['suspicious_patterns'])}"
@@ -75,8 +84,8 @@ class URLAgent:
         Has IP Address: {url_features['has_ip_in_domain']}
         Number of Dots in Domain: {url_features['dot_count']}
         Special Characters: {url_features['special_chars']}
-        Was URL Shortened: {was_shortened}
-        Domain Age (Days): {url_features['domian_age_days']}
+        Was URL Shortened: {expansion_result.was_shortened}
+        Domain Age (Days): {url_features['domain_age_days']}
         Registrar URL: {url_features['registrar_url']}
         Name Servers: {url_features['name_servers']}
         DNSSEC: {url_features['dnssec']}
@@ -98,7 +107,7 @@ class URLAgent:
 
         Confidence Weighting: The confidence score should be weighted based on the order of the indicators above. Give higher weight to indicators ranked higher (e.g., typosquatting, suspicious subdomains, IP addresses in URLs) in your confidence calculation.
         When you reason, rememebr this order as well.
-
+        If there is a legitimate domain present and you think is a phishing link then have a mild confidence score.
         Provide your analysis in this exact format:
         Verdict: safe/phishing
         Confidence: <0.0-1.0>
@@ -112,26 +121,46 @@ class URLAgent:
         if response:
             result = parse_agent_response(response)
             result['url_features'] = url_features
-            result['expanded_url'] = expanded_url
-            result['was_shortened'] = was_shortened
+            result['expanded_url'] = expansion_result.final_url
+            result['was_shortened'] = expansion_result.was_shortened
             result['javascript_analysis'] = js_analysis
             
             print(f"[{self.name}] Verdict: {result['verdict']} (confidence: {result['confidence']:.2f})")
             print(f"[{self.name}] Reasoning: {result['reasoning']}")
             
-            return result
         else:
             # Fallback analysis
             verdict, confidence = self._fallback_analysis(url_features, js_analysis)
-            return {
+            result = {
                 'verdict': verdict,
                 'confidence': confidence,
                 'reasoning': 'Analyzed using heuristics',
                 'url_features': url_features,
-                'expanded_url': expanded_url,
-                'was_shortened': was_shortened,
+                'expanded_url': expansion_result.final_url,
+                'was_shortened': expansion_result.was_shortened,
                 'javascript_analysis': js_analysis
             }
+        
+        # Update context
+        context.set_agent_result(self.name, result)
+        context.expanded_urls[url] = expansion_result.final_url
+        context.url_shortener_used = expansion_result.was_shortened or context.url_shortener_used
+        
+        # Add risk/green flags
+        if result['verdict'] == 'phishing':
+            risk_points = int(result['confidence'] * 35)  # Max 35 points from URL
+            context.add_risk(risk_points, result['reasoning'], self.name)
+        elif result['verdict'] == 'safe':
+            context.add_green_flag(result['reasoning'], self.name)
+        
+        # Add specific risk flags
+        if js_analysis.get('has_suspicious_js'):
+            context.add_risk(15, f"Suspicious JavaScript patterns: {', '.join(js_analysis['suspicious_patterns'][:3])}", self.name)
+        
+        if expansion_result.was_shortened:
+            context.add_risk(5, 'URL shortener detected', self.name)
+        
+        return context
     
     def expand_url_with_selenium(self, url, wait_time=3):
         """
@@ -142,15 +171,17 @@ class URLAgent:
             wait_time (int): Seconds to wait for page load and redirects
         
         Returns:
-            tuple: (final_url, was_shortened)
+            URLExpansionResult: Named tuple containing:
                 - final_url (str): Final URL after redirects, or original URL if fails
-                - was_shortened (bool): True if URL was redirected/shortened, False otherwise
-                - If it was a phishing link or not.
+                - was_shortened (bool): True if URL was redirected/shortened
+                - is_phishing (bool): True if link appears to be phishing (expired, etc.)
+                - error_message (str): Error details if is_phishing is True
         """
         try:
             from selenium import webdriver
             from selenium.webdriver.chrome.options import Options
             from selenium.common.exceptions import TimeoutException, WebDriverException
+            
             print(f"[{self.name}] Opening URL with Selenium...")
             chrome_options = Options()
             chrome_options.add_argument('--headless')
@@ -172,21 +203,21 @@ class URLAgent:
                     print(f"[{self.name}] URL was shortened: {url} -> {final_url}")
                 else:
                     print(f"[{self.name}] URL was not shortened: {final_url}")
-                return final_url, was_shortened, [False, ""]
+                return URLExpansionResult(final_url, was_shortened, False, "")
             finally:
                 driver.quit()
                 
         except ImportError:
             print(f"[{self.name}] Selenium not installed. Install with: pip install selenium")
-            return url, False, [False, ""]
+            return URLExpansionResult(url, False, False, "")
         except WebDriverException as e:
             print(f"Selenium WebDriverException occurred: {str(e)}")
             print("This link was expired and is probably a phishing link.")
-            return url, False, [True, e]
+            return URLExpansionResult(url, False, True, str(e))
 
         except Exception as e:
             print(f"[{self.name}] Error with Selenium: {e}")
-            return url, False, [False, ""]
+            return URLExpansionResult(url, False, False, "")
     
     def check_malicious_javascript(self, url):
         """
@@ -214,6 +245,7 @@ class URLAgent:
             chrome_options.add_argument('--no-sandbox')
             chrome_options.add_argument('--disable-dev-shm-usage')
             
+            driver = None
             driver = webdriver.Chrome(options=chrome_options)
             driver.set_page_load_timeout(SELENIUM_TIMEOUT)
             
@@ -235,29 +267,22 @@ class URLAgent:
                     return scriptContents;
                 """)
                 
-                # Suspicious patterns to check
+                # Suspicious patterns to check (focused on high-risk patterns)
+                # Removed common legitimate patterns: addEventListener, fetch, localStorage, innerHTML
                 suspicious_patterns = [
-                    'eval(',
-                    'document.write(',
-                    'innerHTML',
-                    'onclick',
-                    'onerror',
-                    'onload',
-                    '.cookie',
-                    'localStorage',
-                    'sessionStorage',
-                    'atob(',  # base64 decode
-                    'btoa(',  # base64 encode
-                    'fromCharCode',
-                    'unescape(',
-                    'exec(',
-                    'addEventListener',
-                    'XMLHttpRequest',
-                    'fetch(',
-                    'redirect',
-                    'location.href',
-                    'window.location',
-                    'document.location'
+                    'eval(',  # High risk: code execution
+                    'document.write(',  # Medium risk: DOM manipulation
+                    'onerror',  # Medium risk: error handling abuse
+                    '.cookie',  # Medium risk: cookie access
+                    'atob(',  # High risk: base64 decode (often used for obfuscation)
+                    'btoa(',  # Medium risk: base64 encode
+                    'fromCharCode',  # High risk: character code obfuscation
+                    'unescape(',  # High risk: URL decoding for obfuscation
+                    'exec(',  # High risk: code execution
+                    'XMLHttpRequest',  # Low risk but track for data exfiltration
+                    'location.href',  # Medium risk: redirects
+                    'window.location',  # Medium risk: redirects
+                    'document.location'  # Medium risk: redirects
                 ]
                 
                 found_patterns = []
@@ -296,7 +321,8 @@ class URLAgent:
                 return result
                 
             finally:
-                driver.quit()
+                if driver:
+                    driver.quit()
                 
         except ImportError:
             print(f"[{self.name}] Selenium not installed")
@@ -320,31 +346,55 @@ class URLAgent:
         parsed = urlparse(url)
         ext = tldextract.extract(url)
         # Use whois to get domain info
-        print(f"Fetching domain info for: url")
-        domain_details = whois.whois(url)
+        print(f"Fetching domain info for: {url}")
+        try:
+            domain_details = whois.whois(url)
+        except Exception as e:
+            print(f"[URLAgent] Whois lookup failed: {e}")
+            # Create a dummy object with None values if whois fails
+            class DummyWhois:
+                creation_date = None
+                registrar_url = None
+                reseller = None
+                whois_server = None
+                referral_url = None
+                updated_date = None
+                expiration_date = None
+                name_servers = None
+                status = None
+                emails = None
+                dnssec = None
+                name = None
+                org = None
+                address = None
+                city = None
+                state = None
+                registrant_postal_code = None
+                country = None
+                tech_name = None
+                tech_org = None
+                admin_name = None
+                admin_org = None
+            domain_details = DummyWhois()
 
         # Check for IP address in domain
         ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
         has_ip = bool(re.search(ip_pattern, parsed.netloc))
 
         special_chars = sum([url.count(c) for c in ['@', '-', '_']])
-        final_url = url
+        
         try:
-            response = requests.head(url, allow_redirects=True, timeout=REQUEST_TIMEOUT)
-            final_url = response.url
-        except:
-            pass
-        try:
-            if isinstance(domain_details.creation_date, list):
-                naive_creation_date = domain_details.creation_date[0].replace(tzinfo=None)
+            if domain_details.creation_date:
+                if isinstance(domain_details.creation_date, list):
+                    naive_creation_date = domain_details.creation_date[0].replace(tzinfo=None)
+                else:
+                    naive_creation_date = domain_details.creation_date.replace(tzinfo=None)
+                domain_age = (dt.datetime.now() - naive_creation_date).days
             else:
-                naive_creation_date = domain_details.creation_date.replace(tzinfo=None)
-        except:
-            naive_creation_date = domain_details.creation_date
-        try:
-            domain_age = (dt.datetime.now() - naive_creation_date).days
-        except:
-            domain_age = (dt.datetime.now() - naive_creation_date)
+                domain_age = None
+        except (AttributeError, TypeError, ValueError) as e:
+            print(f"[URLAgent] Error calculating domain age: {e}")
+            domain_age = None
 
 
         features = {
@@ -357,7 +407,7 @@ class URLAgent:
             'has_ip_in_domain': has_ip,
             'dot_count': parsed.netloc.count('.'),
             'special_chars': special_chars,
-            'domian_age_days': domain_age,
+            'domain_age_days': domain_age,
             'registrar_url': domain_details.registrar_url,
             'reseller': domain_details.reseller,
             'server': domain_details.whois_server,
@@ -378,8 +428,7 @@ class URLAgent:
             'tech_name': domain_details.tech_name,
             'tech_org': domain_details.tech_org,
             'admin_name': domain_details.admin_name,
-            'admin_org': domain_details.admin_org,
-            'final_url': final_url
+            'admin_org': domain_details.admin_org
         }
         
         return features

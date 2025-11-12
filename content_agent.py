@@ -6,29 +6,23 @@ import requests
 from bs4 import BeautifulSoup
 import utils
 import config
+from detection_context import DetectionContext
 
 class ContentAgent:
     def __init__(self):
         self.name = "ContentAgent"
     
-    def analyze(self, data):
+    def analyze(self, context: DetectionContext, url: str) -> DetectionContext:
         """
         Analyze website content for phishing indicators
         
         Args:
-            data (dict): {
-                'url': str
-            }
+            context: DetectionContext with current analysis state
+            url: URL to analyze content from
         
         Returns:
-            dict: {
-                'verdict': 'safe'|'phishing'|'uncertain',
-                'confidence': float,
-                'reasoning': str,
-                'content_features': dict
-            }
+            Updated DetectionContext with content analysis results
         """
-        url = data.get('url', '')
         
         print(f"\n[{self.name}] Analyzing content of: {url}")
         
@@ -36,16 +30,18 @@ class ContentAgent:
         content_features = self._extract_content_features(url)
         
         if content_features['error']:
-            return {
+            result = {
                 'verdict': 'uncertain',
                 'confidence': 0.3,
                 'reasoning': f"Could not fetch content: {content_features['error']}",
                 'content_features': content_features
             }
+            context.set_agent_result(self.name, result)
+            context.add_risk(5, f"Could not fetch content: {content_features['error']}", self.name)
+            return context
         
         # Prepare prompt for LLM
         prompt = f"""Analyze this website content for phishing indicators.
-
 URL: {url}
 Page Title: {content_features['title']}
 Number of Forms: {content_features['form_count']}
@@ -63,11 +59,14 @@ Check for:
 5. Suspicious external links
 6. Low-quality design elements
 7. Requests for passwords or financial info
+8. Foriegn language content on local sites.
 
 Provide your analysis in this exact format:
-Verdict: safe/phishing/uncertain
+Verdict: safe/phishing
 Confidence: <0.0-1.0>
 Reasoning: <brief explanation>
+If the confidence score is under 0.4 for phishing or safe then return uncertain with reasoning.
+The reasoning should summarize the key factors that influenced your decision. It should not be very big, maximum 1 paragraph. Remember the output should only contain the fields requested(Verdict, Confidence, Reasoning), no additional text.        
 """
         
         response = utils.query_llm(prompt)
@@ -79,16 +78,36 @@ Reasoning: <brief explanation>
             print(f"[{self.name}] Verdict: {result['verdict']} (confidence: {result['confidence']:.2f})")
             print(f"[{self.name}] Reasoning: {result['reasoning']}")
             
-            return result
         else:
             # Fallback analysis
             verdict, confidence = self._fallback_analysis(content_features)
-            return {
+            result = {
                 'verdict': verdict,
                 'confidence': confidence,
                 'reasoning': 'Analyzed using heuristics',
                 'content_features': content_features
             }
+        
+        # Update context
+        context.set_agent_result(self.name, result)
+        context.page_title = content_features.get('title', '')
+        
+        # Add risk/green flags
+        if result['verdict'] == 'phishing':
+            risk_points = int(result['confidence'] * 25)  # Max 25 points from content
+            context.add_risk(risk_points, result['reasoning'], self.name)
+        elif result['verdict'] == 'safe':
+            context.add_green_flag(result['reasoning'], self.name)
+        
+        # Add specific risk flags
+        if content_features.get('password_fields', 0) > 0:
+            context.add_risk(10, f"Password fields detected: {content_features['password_fields']}", self.name)
+            context.form_fields_detected.append('password')
+        
+        if content_features.get('form_count', 0) > 2:
+            context.add_risk(5, f"Multiple forms detected: {content_features['form_count']}", self.name)
+        
+        return context
     
     def _extract_content_features(self, url):
         """Fetch and extract features from website content"""

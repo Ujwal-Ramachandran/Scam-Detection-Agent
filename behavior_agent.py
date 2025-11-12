@@ -64,9 +64,11 @@ Check for:
 5. Attempts to collect data without user interaction
 
 Provide your analysis in this exact format:
-Verdict: safe/phishing/uncertain
+Verdict: safe/phishing
 Confidence: <0.0-1.0>
 Reasoning: <brief explanation>
+If the confidence score is under 0.4 for phishing or safe then return uncertain with reasoning.
+The reasoning should summarize the key factors that influenced your decision. It should not be very big, maximum 1 paragraph. Remember the output should only contain the fields requested(Verdict, Confidence, Reasoning), no additional text.
 """
         
         response = utils.query_llm(prompt)

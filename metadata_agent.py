@@ -5,29 +5,23 @@ Metadata Agent - Analyzes HTTP headers and metadata
 import requests
 import utils
 import config
+from detection_context import DetectionContext
 
 class MetadataAgent:
     def __init__(self):
         self.name = "MetadataAgent"
     
-    def analyze(self, data):
+    def analyze(self, context: DetectionContext, url: str) -> DetectionContext:
         """
         Analyze HTTP headers and metadata for phishing indicators
         
         Args:
-            data (dict): {
-                'url': str
-            }
+            context: DetectionContext with current analysis state
+            url: URL to analyze metadata from
         
         Returns:
-            dict: {
-                'verdict': 'safe'|'phishing'|'uncertain',
-                'confidence': float,
-                'reasoning': str,
-                'metadata_features': dict
-            }
+            Updated DetectionContext with metadata analysis results
         """
-        url = data.get('url', '')
         
         print(f"\n[{self.name}] Analyzing metadata of: {url}")
         
@@ -35,12 +29,14 @@ class MetadataAgent:
         metadata_features = self._extract_metadata_features(url)
         
         if metadata_features['error']:
-            return {
+            result = {
                 'verdict': 'uncertain',
                 'confidence': 0.3,
                 'reasoning': f"Could not fetch metadata: {metadata_features['error']}",
                 'metadata_features': metadata_features
             }
+            context.set_agent_result(self.name, result)
+            return context
         
         # Prepare prompt for LLM
         prompt = f"""Analyze this website's HTTP headers and metadata for phishing indicators.
@@ -64,9 +60,11 @@ Check for:
 5. Unusual content types
 
 Provide your analysis in this exact format:
-Verdict: safe/phishing/uncertain
+Verdict: safe/phishing
 Confidence: <0.0-1.0>
 Reasoning: <brief explanation>
+If the confidence score is under 0.4 for phishing or safe then return uncertain with reasoning.
+The reasoning should summarize the key factors that influenced your decision. It should not be very big, maximum 1 paragraph. Remember the output should only contain the fields requested(Verdict, Confidence, Reasoning), no additional text.
 """
         
         response = utils.query_llm(prompt)
@@ -78,16 +76,45 @@ Reasoning: <brief explanation>
             print(f"[{self.name}] Verdict: {result['verdict']} (confidence: {result['confidence']:.2f})")
             print(f"[{self.name}] Reasoning: {result['reasoning']}")
             
-            return result
         else:
             # Fallback analysis
             verdict, confidence = self._fallback_analysis(metadata_features)
-            return {
+            result = {
                 'verdict': verdict,
                 'confidence': confidence,
                 'reasoning': 'Analyzed using heuristics',
                 'metadata_features': metadata_features
             }
+        
+        # Update context
+        context.set_agent_result(self.name, result)
+        
+        # Calculate security headers score
+        security_score = sum([
+            metadata_features.get('has_hsts', False),
+            metadata_features.get('has_csp', False),
+            metadata_features.get('has_xfo', False),
+            metadata_features.get('has_xcto', False)
+        ]) * 25  # 0-100 scale
+        context.security_headers_score = security_score
+        
+        # Add risk/green flags
+        if result['verdict'] == 'phishing':
+            risk_points = int(result['confidence'] * 20)  # Max 20 points from metadata
+            context.add_risk(risk_points, result['reasoning'], self.name)
+        elif result['verdict'] == 'safe':
+            context.add_green_flag(result['reasoning'], self.name)
+        
+        # Add specific risk flags
+        if not metadata_features.get('is_https', False):
+            context.add_risk(15, 'No HTTPS encryption', self.name)
+        
+        if security_score < 50:
+            context.add_risk(10, f'Poor security headers (score: {security_score}/100)', self.name)
+        elif security_score >= 75:
+            context.add_green_flag(f'Good security headers (score: {security_score}/100)', self.name)
+        
+        return context
     
     def _extract_metadata_features(self, url):
         """Fetch and extract metadata features"""

@@ -5,9 +5,17 @@ from config import OLLAMA_MODEL
 
 def extract_urls_from_text(text):
     """Extract all URLs from text using regex"""
-    url_pattern = r'http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+'
+    # Improved regex to capture more URL formats including international characters
+    url_pattern = r'http[s]?://(?:[a-zA-Z0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+[^\s]*'
     urls = re.findall(url_pattern, text)
-    return urls
+    
+    # Also check for URLs without protocol (www.example.com)
+    www_pattern = r'www\.(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}(?:/[^\s]*)?'
+    www_urls = re.findall(www_pattern, text)
+    # Add http:// prefix to www URLs
+    www_urls = ['http://' + url for url in www_urls]
+    all_urls = urls + www_urls
+    return [url[:-1] if url.endswith('.') else url for url in all_urls]
 
 def query_llm(prompt, system_message="You are a cybersecurity expert specialized in phishing detection."):
     """
@@ -34,6 +42,14 @@ def query_llm(prompt, system_message="You are a cybersecurity expert specialized
         final_answer = re.sub(r"<think>.*?</think>", "", response_content, flags=re.DOTALL).strip()
         
         return final_answer
+    except ConnectionError:
+        print(f"Error: Cannot connect to Ollama. Is it running?")
+        print(f"Start Ollama with: ollama serve")
+        return None
+    except KeyError as e:
+        print(f"Error: Model {OLLAMA_MODEL} not found or invalid response.")
+        print(f"Pull the model with: ollama pull {OLLAMA_MODEL}")
+        return None
     except Exception as e:
         print(f"Error querying LLM: {e}")
         return None
