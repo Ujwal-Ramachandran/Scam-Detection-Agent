@@ -107,7 +107,7 @@ class URLAgent:
 
         Confidence Weighting: The confidence score should be weighted based on the order of the indicators above. Give higher weight to indicators ranked higher (e.g., typosquatting, suspicious subdomains, IP addresses in URLs) in your confidence calculation.
         When you reason, rememebr this order as well.
-        If there is a legitimate domain present and you think is a phishing link then have a mild confidence score.
+        If there is a legitimate domain present and you think is a phishing link then have a mild confidence score. If there is an HTTP and not HTTPS link then increase the confidence score as well.
         Provide your analysis in this exact format:
         Verdict: safe/phishing
         Confidence: <0.0-1.0>
