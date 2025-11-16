@@ -516,6 +516,7 @@ Enabling the Behavior Agent provides a more thorough analysis at the cost of spe
 ## About
 
 **Author:** Ujwal Ramachandran
+
 **Affiliation:** Masters Student in Cybersecurity, Nanyang Technological University (NTU), Singapore
 
 This project was built as a fun exploration of multi-agent systems and phishing detection techniques. It combines traditional security analysis with modern LLM capabilities to create a comprehensive detection system.
