@@ -505,7 +505,7 @@ Enabling the Behavior Agent provides a more thorough analysis at the cost of spe
 
 | Feature | Behavior Agent OFF (Default) | Behavior Agent ON (Advanced) |
 | :--- | :--- | :--- |
-| **Analysis Time** | **~5-15 seconds** per URL | **~15-30 seconds** per URL |
+| **Analysis Time** | **~45-115 seconds** per URL | **~2-4 minutes** per URL |
 | **Resource Usage** | Moderate | High (runs a full browser instance) |
 | **Detection Capability** | Static analysis (code, headers, domain) | Dynamic analysis (runtime behavior) |
 | **Key Detections** | Typosquatting, bad SSL, suspicious forms | **Redirect chains, data exfiltration, drive-by-downloads** |
