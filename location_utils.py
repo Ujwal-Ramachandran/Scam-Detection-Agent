@@ -166,40 +166,40 @@ def check_location_mismatch(host_location: Optional[Dict],
 
 
 # Example usage and testing
-if __name__ == "__main__":
-    print("=== Testing Location Utils ===\n")
+# if __name__ == "__main__":
+#     print("=== Testing Location Utils ===\n")
     
-    # Test host location
-    print("1. Getting host location...")
-    location = get_host_location()
-    if location:
-        print(f"   Success: {location}\n")
-    else:
-        print("   Failed to get location\n")
+#     # Test host location
+#     print("1. Getting host location...")
+#     location = get_host_location()
+#     if location:
+#         print(f"   Success: {location}\n")
+#     else:
+#         print("   Failed to get location\n")
     
-    # Test phone number parsing
-    print("2. Testing phone number parsing...")
-    test_numbers = [
-        "+919876543210",  # India
-        "+14155552671",   # USA
-        "+442071234567",  # UK
-        "9876543210",     # Without country code
-    ]
+#     # Test phone number parsing
+#     print("2. Testing phone number parsing...")
+#     test_numbers = [
+#         "+919876543210",  # India
+#         "+14155552671",   # USA
+#         "+442071234567",  # UK
+#         "9876543210",     # Without country code
+#     ]
     
-    for number in test_numbers:
-        print(f"\n   Testing: {number}")
-        info = get_phone_info(number)
-        if info:
-            print(f"   Country: {info['country']}")
-            print(f"   Carrier: {info['carrier']}")
-            print(f"   Type: {info['number_type']}")
-            print(f"   Valid: {info['is_valid']}")
-            print(f"   Formatted: {info['formatted']}")
+#     for number in test_numbers:
+#         print(f"\n   Testing: {number}")
+#         info = get_phone_info(number)
+#         if info:
+#             print(f"   Country: {info['country']}")
+#             print(f"   Carrier: {info['carrier']}")
+#             print(f"   Type: {info['number_type']}")
+#             print(f"   Valid: {info['is_valid']}")
+#             print(f"   Formatted: {info['formatted']}")
     
-    # Test location mismatch
-    print("\n3. Testing location mismatch detection...")
-    if location:
-        test_phone = get_phone_info("+919876543210")
-        if test_phone:
-            mismatch = check_location_mismatch(location, test_phone)
-            print(f"   Mismatch detected: {mismatch}")
+#     # Test location mismatch
+#     print("\n3. Testing location mismatch detection...")
+#     if location:
+#         test_phone = get_phone_info("+919876543210")
+#         if test_phone:
+#             mismatch = check_location_mismatch(location, test_phone)
+#             print(f"   Mismatch detected: {mismatch}")

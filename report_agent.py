@@ -319,7 +319,7 @@ class ReportAgent:
         
         # Create filename with timestamp
         timestamp_str = context.timestamp.strftime('%Y%m%d_%H%M%S')
-        filename = f"phishing_detection_{timestamp_str}.log"
+        filename = f"phishing_detection_{timestamp_str}.md"
         filepath = Path(reports_dir) / filename
         
         # Format and write report
